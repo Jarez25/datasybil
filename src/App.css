@@ -29,3 +29,15 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3f3f46;
 }
+
+/* Monaco Editor Active Statement Highlight (DataGrip style) */
+.active-statement-line-highlight {
+  background: rgba(16, 185, 129, 0.06) !important;
+  border-left: 2px solid #10b981 !important;
+}
+
+.active-statement-gutter-icon {
+  background: #10b981;
+  width: 3px !important;
+  margin-left: 3px;
+}

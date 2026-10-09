@@ -27,6 +27,8 @@ export function App() {
   const [isNewConnModalOpen, setIsNewConnModalOpen] = useState(false);
   const [isDemoLoading, setIsDemoLoading] = useState(false);
   const [isFormulasDropdownOpen, setIsFormulasDropdownOpen] = useState(false);
+  const [activeCursorQuery, setActiveCursorQuery] = useState<string>('');
+  const [isRunMenuOpen, setIsRunMenuOpen] = useState(false);
 
   // Tabs state
   const [tabs, setTabs] = useState<QueryTab[]>([
@@ -136,7 +138,7 @@ export function App() {
     setTabs((prev) =>
       prev.map((t) =>
         t.id === activeTabId
-          ? { ...t, isExecuting: true, error: null, sql: overrideSql || t.sql }
+          ? { ...t, isExecuting: true, error: null }
           : t
       )
     );
@@ -291,7 +293,10 @@ export function App() {
   return (
     <div
       className="flex h-screen w-screen overflow-hidden bg-zinc-950 font-sans text-zinc-100"
-      onClick={() => setIsFormulasDropdownOpen(false)}
+      onClick={() => {
+        setIsFormulasDropdownOpen(false);
+        setIsRunMenuOpen(false);
+      }}
     >
       {/* Left Database Explorer Sidebar */}
       <Sidebar
@@ -428,19 +433,64 @@ export function App() {
               )}
             </div>
 
-            {/* Run Query Button */}
-            <button
-              onClick={() => handleExecuteQuery()}
-              disabled={activeTab.isExecuting || !activeConnectionId}
-              className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-medium text-xs rounded-lg transition disabled:opacity-40 shadow-sm shadow-emerald-950"
-              title="Ejecutar consulta (Ctrl + Enter)"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Ejecutar</span>
-              <kbd className="hidden sm:inline-block px-1 py-0.5 text-[10px] bg-emerald-700/80 rounded text-emerald-100">
-                Ctrl ↵
-              </kbd>
-            </button>
+            {/* Run Query Split Button (DataGrip style) */}
+            <div className="flex items-center rounded-lg shadow-sm shadow-emerald-950">
+              <button
+                onClick={() => handleExecuteQuery(undefined, activeCursorQuery || undefined)}
+                disabled={activeTab.isExecuting || !activeConnectionId}
+                className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-medium text-xs rounded-l-lg transition disabled:opacity-40"
+                title={activeCursorQuery ? 'Ejecutar consulta activa en cursor (Ctrl + Enter)' : 'Ejecutar consulta (Ctrl + Enter)'}
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Ejecutar</span>
+                <kbd className="hidden sm:inline-block px-1 py-0.5 text-[10px] bg-emerald-700/80 rounded text-emerald-100">
+                  Ctrl ↵
+                </kbd>
+              </button>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsRunMenuOpen(!isRunMenuOpen);
+                  }}
+                  disabled={activeTab.isExecuting || !activeConnectionId}
+                  className="px-1.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white border-l border-emerald-500/40 rounded-r-lg transition disabled:opacity-40"
+                  title="Opciones de ejecución"
+                >
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+
+                {isRunMenuOpen && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-full mt-1.5 w-64 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl py-1.5 z-50 text-xs"
+                  >
+                    <button
+                      onClick={() => {
+                        handleExecuteQuery(undefined, activeCursorQuery || undefined);
+                        setIsRunMenuOpen(false);
+                      }}
+                      className="w-full flex flex-col px-3 py-1.5 hover:bg-zinc-800 text-left text-zinc-200"
+                    >
+                      <span className="font-semibold text-emerald-300">Ejecutar consulta activa</span>
+                      <span className="text-[10px] text-zinc-400 font-mono">En cursor o selección (Ctrl + Enter)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleExecuteQuery(undefined, activeTab.sql);
+                        setIsRunMenuOpen(false);
+                      }}
+                      className="w-full flex flex-col px-3 py-1.5 hover:bg-zinc-800 text-left text-zinc-200 border-t border-zinc-800"
+                    >
+                      <span className="font-semibold text-blue-300">Ejecutar todo el script</span>
+                      <span className="text-[10px] text-zinc-400">Todas las consultas del editor</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </header>
 
@@ -488,7 +538,8 @@ export function App() {
             <SqlEditor
               value={activeTab.sql}
               onChange={updateActiveTabSql}
-              onExecute={() => handleExecuteQuery()}
+              onExecute={(queryToRun) => handleExecuteQuery(undefined, queryToRun)}
+              onActiveQueryChange={setActiveCursorQuery}
               isExecuting={activeTab.isExecuting}
             />
           </div>

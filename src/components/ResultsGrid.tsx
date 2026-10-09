@@ -16,6 +16,9 @@ import {
   X,
   FolderDown,
   ChevronDown,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 
 interface Props {
@@ -23,12 +26,30 @@ interface Props {
   tableName?: string;
 }
 
+interface SortConfig {
+  colIndex: number;
+  direction: 'asc' | 'desc';
+}
+
 export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' }) => {
   const [filterText, setFilterText] = useState('');
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number; val: unknown } | null>(null);
+  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const toggleSort = (colIndex: number) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.colIndex !== colIndex) {
+        return { colIndex, direction: 'asc' };
+      }
+      if (prev.direction === 'asc') {
+        return { colIndex, direction: 'desc' };
+      }
+      return null; // Return to original order
+    });
+  };
 
   // Filter rows based on search input
   const filteredRows = useMemo(() => {
@@ -40,6 +61,37 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
       row.some((cell) => (cell !== null && cell !== undefined ? String(cell).toLowerCase().includes(query) : false))
     );
   }, [result, filterText]);
+
+  // Sort rows based on active column and direction (smart typing: numbers, strings, booleans, dates)
+  const sortedAndFilteredRows = useMemo(() => {
+    if (!sortConfig) return filteredRows;
+    const { colIndex, direction } = sortConfig;
+
+    return [...filteredRows].sort((rowA, rowB) => {
+      const a = rowA[colIndex];
+      const b = rowB[colIndex];
+
+      // Nulls always placed at the bottom regardless of asc/desc
+      if ((a === null || a === undefined) && (b === null || b === undefined)) return 0;
+      if (a === null || a === undefined) return 1;
+      if (b === null || b === undefined) return -1;
+
+      let comp = 0;
+      if (typeof a === 'number' && typeof b === 'number') {
+        comp = a - b;
+      } else if (typeof a === 'boolean' && typeof b === 'boolean') {
+        comp = (a ? 1 : 0) - (b ? 1 : 0);
+      } else {
+        // Natural alphanumeric comparison
+        comp = String(a).localeCompare(String(b), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+      }
+
+      return direction === 'asc' ? comp : -comp;
+    });
+  }, [filteredRows, sortConfig]);
 
   if (!result) {
     return (
@@ -148,6 +200,19 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
 
         {/* Performance & Row Counter Stats */}
         <div className="flex items-center gap-4 text-zinc-400">
+          {sortConfig && (
+            <button
+              onClick={() => setSortConfig(null)}
+              className="flex items-center gap-1 text-[11px] px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-300 rounded border border-zinc-700 transition"
+              title="Restablecer orden original"
+            >
+              <span>
+                Orden: <strong>{result.columns[sortConfig.colIndex]?.name}</strong> ({sortConfig.direction === 'asc' ? 'A-Z' : 'Z-A'})
+              </span>
+              <X className="w-3 h-3" />
+            </button>
+          )}
+
           <div className="flex items-center gap-1.5" title="Tiempo de ejecución de la consulta en el motor">
             <Clock className="w-3.5 h-3.5 text-emerald-400" />
             <span className="font-mono text-emerald-300 font-medium">
@@ -158,8 +223,8 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
           <div className="flex items-center gap-1.5" title="Filas retornadas">
             <Rows className="w-3.5 h-3.5 text-zinc-400" />
             <span>
-              <strong className="text-zinc-200 font-mono">{filteredRows.length}</strong>
-              {filteredRows.length !== result.rows.length && ` de ${result.rows.length}`} filas
+              <strong className="text-zinc-200 font-mono">{sortedAndFilteredRows.length}</strong>
+              {sortedAndFilteredRows.length !== result.rows.length && ` de ${result.rows.length}`} filas
             </span>
           </div>
 
@@ -252,7 +317,10 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
           )}
 
           {savedNotice && (
-            <div className="flex items-center gap-1.5 text-emerald-300 bg-emerald-950/80 border border-emerald-600/50 px-2.5 py-0.5 rounded-md animate-fade-in font-medium max-w-xs truncate" title={savedNotice}>
+            <div
+              className="flex items-center gap-1.5 text-emerald-300 bg-emerald-950/80 border border-emerald-600/50 px-2.5 py-0.5 rounded-md animate-fade-in font-medium max-w-xs truncate"
+              title={savedNotice}
+            >
               <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
               <span className="truncate">{savedNotice}</span>
             </div>
@@ -269,25 +337,44 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
               <th className="px-3 py-2 w-12 text-center text-zinc-600 border-r border-zinc-800/80 font-normal">
                 #
               </th>
-              {result.columns.map((col, idx) => (
-                <th
-                  key={idx}
-                  className="px-3 py-2 border-r border-zinc-800/80 font-medium text-zinc-300 group hover:bg-zinc-800/60 transition"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-zinc-100">{col.name}</span>
-                    <span className="text-[10px] text-zinc-500 font-normal uppercase bg-zinc-950/60 px-1 rounded border border-zinc-800">
-                      {col.data_type}
-                    </span>
-                  </div>
-                </th>
-              ))}
+              {result.columns.map((col, idx) => {
+                const isSorted = sortConfig?.colIndex === idx;
+
+                return (
+                  <th
+                    key={idx}
+                    onClick={() => toggleSort(idx)}
+                    className={`px-3 py-2 border-r border-zinc-800/80 font-medium group cursor-pointer transition select-none ${
+                      isSorted ? 'bg-zinc-800 text-emerald-300' : 'text-zinc-300 hover:bg-zinc-800/60'
+                    }`}
+                    title="Clic para ordenar (Ascendente / Descendente / Quitar orden)"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0 truncate">
+                        <span className="font-semibold text-zinc-100 truncate">{col.name}</span>
+                        {isSorted ? (
+                          sortConfig.direction === 'asc' ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 transition shrink-0" />
+                        )}
+                      </div>
+                      <span className="text-[10px] text-zinc-500 font-normal uppercase bg-zinc-950/60 px-1 rounded border border-zinc-800 shrink-0">
+                        {col.data_type}
+                      </span>
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
 
           {/* Body */}
           <tbody className="divide-y divide-zinc-900">
-            {filteredRows.map((row, rIdx) => (
+            {sortedAndFilteredRows.map((row, rIdx) => (
               <tr key={rIdx} className="hover:bg-zinc-900/60 transition group">
                 {/* Row Number */}
                 <td className="px-3 py-1.5 text-center text-zinc-600 bg-zinc-950/80 border-r border-zinc-800/80 text-[11px] select-none">
@@ -298,6 +385,7 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
                 {row.map((cell, cIdx) => {
                   const isNull = cell === null || cell === undefined;
                   const isSelected = selectedCell?.row === rIdx && selectedCell?.col === cIdx;
+                  const isSortedColumn = sortConfig?.colIndex === cIdx;
 
                   return (
                     <td
@@ -306,6 +394,8 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
                       className={`px-3 py-1.5 border-r border-zinc-800/50 truncate max-w-xs transition cursor-pointer ${
                         isSelected
                           ? 'bg-emerald-950/60 outline outline-1 outline-emerald-500'
+                          : isSortedColumn
+                          ? 'bg-zinc-900/40 hover:bg-zinc-800/40'
                           : 'hover:bg-zinc-800/40'
                       }`}
                     >
