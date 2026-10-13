@@ -18,6 +18,8 @@ import {
   ListOrdered,
   FileCode,
   HelpCircle,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 
 export type FormulaType = 'select' | 'count' | 'latest' | 'describe' | 'insert';
@@ -30,9 +32,11 @@ interface Props {
   onOpenNewConnectionModal: () => void;
   onLoadDemo: () => void;
   onRefreshMetadata: (id: string) => void;
+  onDeleteConnection?: (id: string) => void;
   onSelectTableForQuery: (table: TableMetadata, schemaName?: string) => void;
   onSelectFormula: (formula: FormulaType, table: TableMetadata, schemaName?: string) => void;
   isDemoLoading: boolean;
+  connectingIds?: Record<string, boolean>;
 }
 
 export const Sidebar: React.FC<Props> = ({
@@ -43,9 +47,11 @@ export const Sidebar: React.FC<Props> = ({
   onOpenNewConnectionModal,
   onLoadDemo,
   onRefreshMetadata,
+  onDeleteConnection,
   onSelectTableForQuery,
   onSelectFormula,
   isDemoLoading,
+  connectingIds = {},
 }) => {
   const [expandedConnections, setExpandedConnections] = useState<Record<string, boolean>>({
     'demo-sqlite': true,
@@ -126,6 +132,7 @@ export const Sidebar: React.FC<Props> = ({
           const isConnExpanded = expandedConnections[conn.id] ?? (conn.id === activeConnectionId);
           const isSelected = activeConnectionId === conn.id;
           const meta = metadataMap[conn.id];
+          const isConnecting = !!connectingIds[conn.id];
 
           return (
             <div key={conn.id} className="rounded-md overflow-hidden">
@@ -142,6 +149,13 @@ export const Sidebar: React.FC<Props> = ({
                   ) : (
                     <ChevronRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                   )}
+                  {isConnecting ? (
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" title="Conectando..." />
+                  ) : meta ? (
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-sm shadow-emerald-400/50" title="Conectado" />
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-zinc-600 shrink-0" title="Desconectado" />
+                  )}
                   <Server className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span className="truncate" title={conn.name}>
                     {conn.name}
@@ -151,21 +165,59 @@ export const Sidebar: React.FC<Props> = ({
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onRefreshMetadata(conn.id);
                     }}
-                    title="Recargar metadatos del servidor"
-                    className="p-1 hover:text-emerald-400 hover:bg-zinc-700/60 rounded"
+                    disabled={isConnecting}
+                    title="Recargar / Conectar servidor"
+                    className="p-1 hover:text-emerald-400 hover:bg-zinc-700/60 rounded transition text-zinc-400"
                   >
-                    <RefreshCw className="w-3 h-3 text-zinc-400" />
+                    {isConnecting ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                    ) : (
+                      <RefreshCw className="w-3 h-3" />
+                    )}
                   </button>
+
+                  {onDeleteConnection && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`¿Estás seguro de eliminar la conexión "${conn.name}"?`)) {
+                          onDeleteConnection(conn.id);
+                        }
+                      }}
+                      title="Eliminar conexión guardada"
+                      className="p-1 hover:text-rose-400 hover:bg-zinc-700/60 rounded transition text-zinc-500 opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Schemas / Databases Tree */}
+              {isConnExpanded && !meta && (
+                <div className="pl-3 pt-1 border-l border-zinc-800/80 ml-3">
+                  {isConnecting ? (
+                    <div className="text-[11px] text-zinc-400 italic px-2 py-1 flex items-center gap-1.5">
+                      <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                      <span>Conectando a la base de datos...</span>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => onSelectConnection(conn.id)}
+                      className="text-[11px] text-zinc-400 hover:text-emerald-400 italic px-2 py-1 cursor-pointer hover:bg-zinc-900 rounded"
+                    >
+                      Desconectado. Clic para conectar.
+                    </div>
+                  )}
+                </div>
+              )}
+
               {isConnExpanded && meta && (
                 <div className="pl-3 pt-1 space-y-0.5 border-l border-zinc-800/80 ml-3">
                   {meta.schemas.length === 0 ? (

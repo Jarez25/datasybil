@@ -1,11 +1,37 @@
 pub mod db;
 pub mod export;
 pub mod models;
+pub mod storage;
 
 use db::DatabaseManager;
 use models::{ColumnInfo, ConnectionConfig, DatabaseMetadata, DriverType, QueryResult, SqlValidationResult};
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, State};
+
+#[tauri::command]
+async fn get_saved_connections(app: AppHandle) -> Result<Vec<ConnectionConfig>, String> {
+    storage::load_connections(&app).await
+}
+
+#[tauri::command]
+async fn save_connection(app: AppHandle, config: ConnectionConfig) -> Result<(), String> {
+    storage::save_connection(&app, config).await
+}
+
+#[tauri::command]
+async fn delete_saved_connection(
+    app: AppHandle,
+    id: String,
+    manager: State<'_, DatabaseManager>,
+) -> Result<(), String> {
+    let _ = manager.disconnect(&id).await;
+    storage::delete_connection(&app, &id).await
+}
+
+#[tauri::command]
+async fn is_connection_active(id: String, manager: State<'_, DatabaseManager>) -> Result<bool, String> {
+    Ok(manager.is_connected(&id).await)
+}
 
 #[tauri::command]
 async fn export_query_result(
@@ -145,6 +171,10 @@ pub fn run() {
         .manage(db_manager)
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            get_saved_connections,
+            save_connection,
+            delete_saved_connection,
+            is_connection_active,
             connect_db,
             disconnect_db,
             get_schema_metadata,

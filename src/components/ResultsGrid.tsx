@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { QueryResult } from '../types';
 import {
@@ -31,6 +31,9 @@ interface SortConfig {
   direction: 'asc' | 'desc';
 }
 
+const ROW_HEIGHT = 28;
+const OVERSCAN = 12;
+
 export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' }) => {
   const [filterText, setFilterText] = useState('');
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number; val: unknown } | null>(null);
@@ -38,6 +41,38 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Virtualization state
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(500);
+
+  // Measure viewport height dynamically
+  useEffect(() => {
+    if (!scrollContainerRef.current) return;
+    const updateSize = () => {
+      if (scrollContainerRef.current) {
+        setViewportHeight(scrollContainerRef.current.clientHeight);
+      }
+    };
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(updateSize);
+    resizeObserver.observe(scrollContainerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // Reset scroll to top when result or filter text changes
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+      setScrollTop(0);
+    }
+  }, [result, filterText]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  };
 
   const toggleSort = (colIndex: number) => {
     setSortConfig((prev) => {
@@ -92,6 +127,18 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
       return direction === 'asc' ? comp : -comp;
     });
   }, [filteredRows, sortConfig]);
+
+  // Virtual window calculation
+  const totalRows = sortedAndFilteredRows.length;
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN);
+
+  const visibleRows = useMemo(() => {
+    return sortedAndFilteredRows.slice(startIndex, endIndex);
+  }, [sortedAndFilteredRows, startIndex, endIndex]);
+
+  const topPadding = startIndex * ROW_HEIGHT;
+  const bottomPadding = Math.max(0, (totalRows - endIndex) * ROW_HEIGHT);
 
   if (!result) {
     return (
@@ -328,8 +375,12 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
         </div>
       </div>
 
-      {/* Main Grid Viewport */}
-      <div className="flex-1 overflow-auto">
+      {/* Main Grid Viewport with Virtual Scrolling */}
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-auto"
+      >
         <table className="w-full border-collapse text-left font-mono text-xs select-text">
           {/* Header */}
           <thead className="bg-zinc-900 sticky top-0 z-10 border-b border-zinc-800 select-none">
@@ -372,49 +423,87 @@ export const ResultsGrid: React.FC<Props> = ({ result, tableName = 'result_set' 
             </tr>
           </thead>
 
-          {/* Body */}
+          {/* Virtualized Body */}
           <tbody className="divide-y divide-zinc-900">
-            {sortedAndFilteredRows.map((row, rIdx) => (
-              <tr key={rIdx} className="hover:bg-zinc-900/60 transition group">
-                {/* Row Number */}
-                <td className="px-3 py-1.5 text-center text-zinc-600 bg-zinc-950/80 border-r border-zinc-800/80 text-[11px] select-none">
-                  {rIdx + 1}
+            {totalRows === 0 ? (
+              <tr>
+                <td
+                  colSpan={result.columns.length + 1}
+                  className="px-6 py-12 text-center text-zinc-500 italic select-none"
+                >
+                  {filterText
+                    ? `No se encontraron filas que coincidan con "${filterText}".`
+                    : 'La consulta no retornó datos.'}
                 </td>
+              </tr>
+            ) : (
+              <>
+                {topPadding > 0 && (
+                  <tr style={{ height: `${topPadding}px` }} aria-hidden="true">
+                    <td colSpan={result.columns.length + 1} />
+                  </tr>
+                )}
 
-                {/* Cells */}
-                {row.map((cell, cIdx) => {
-                  const isNull = cell === null || cell === undefined;
-                  const isSelected = selectedCell?.row === rIdx && selectedCell?.col === cIdx;
-                  const isSortedColumn = sortConfig?.colIndex === cIdx;
+                {visibleRows.map((row, vIdx) => {
+                  const rIdx = startIndex + vIdx;
+                  const isEven = rIdx % 2 === 0;
 
                   return (
-                    <td
-                      key={cIdx}
-                      onClick={() => setSelectedCell({ row: rIdx, col: cIdx, val: cell })}
-                      className={`px-3 py-1.5 border-r border-zinc-800/50 truncate max-w-xs transition cursor-pointer ${
-                        isSelected
-                          ? 'bg-emerald-950/60 outline outline-1 outline-emerald-500'
-                          : isSortedColumn
-                          ? 'bg-zinc-900/40 hover:bg-zinc-800/40'
-                          : 'hover:bg-zinc-800/40'
+                    <tr
+                      key={rIdx}
+                      style={{ height: `${ROW_HEIGHT}px` }}
+                      className={`hover:bg-zinc-900/60 transition group ${
+                        isEven ? 'bg-zinc-950' : 'bg-zinc-950/40'
                       }`}
                     >
-                      {isNull ? (
-                        <span className="text-zinc-600 italic font-sans text-[11px]">NULL</span>
-                      ) : typeof cell === 'boolean' ? (
-                        <span className={cell ? 'text-emerald-400' : 'text-rose-400'}>
-                          {cell ? 'TRUE' : 'FALSE'}
-                        </span>
-                      ) : typeof cell === 'number' ? (
-                        <span className="text-cyan-400">{cell}</span>
-                      ) : (
-                        <span className="text-zinc-200">{String(cell)}</span>
-                      )}
-                    </td>
+                      {/* Row Number */}
+                      <td className="px-3 text-center text-zinc-600 bg-zinc-950/80 border-r border-zinc-800/80 text-[11px] select-none whitespace-nowrap">
+                        {rIdx + 1}
+                      </td>
+
+                      {/* Cells */}
+                      {row.map((cell, cIdx) => {
+                        const isNull = cell === null || cell === undefined;
+                        const isSelected = selectedCell?.row === rIdx && selectedCell?.col === cIdx;
+                        const isSortedColumn = sortConfig?.colIndex === cIdx;
+
+                        return (
+                          <td
+                            key={cIdx}
+                            onClick={() => setSelectedCell({ row: rIdx, col: cIdx, val: cell })}
+                            className={`px-3 border-r border-zinc-800/50 truncate max-w-xs transition cursor-pointer select-text ${
+                              isSelected
+                                ? 'bg-emerald-950/60 outline outline-1 outline-emerald-500'
+                                : isSortedColumn
+                                ? 'bg-zinc-900/40 hover:bg-zinc-800/40'
+                                : 'hover:bg-zinc-800/40'
+                            }`}
+                          >
+                            {isNull ? (
+                              <span className="text-zinc-600 italic font-sans text-[11px]">NULL</span>
+                            ) : typeof cell === 'boolean' ? (
+                              <span className={cell ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                                {cell ? 'TRUE' : 'FALSE'}
+                              </span>
+                            ) : typeof cell === 'number' ? (
+                              <span className="text-cyan-400">{cell}</span>
+                            ) : (
+                              <span className="text-zinc-200">{String(cell)}</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
                   );
                 })}
-              </tr>
-            ))}
+
+                {bottomPadding > 0 && (
+                  <tr style={{ height: `${bottomPadding}px` }} aria-hidden="true">
+                    <td colSpan={result.columns.length + 1} />
+                  </tr>
+                )}
+              </>
+            )}
           </tbody>
         </table>
       </div>

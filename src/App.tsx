@@ -47,10 +47,60 @@ export function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
-  // Auto-load demo on first launch if empty
+  const [connectingIds, setConnectingIds] = useState<Record<string, boolean>>({});
+
+  // Auto-load saved connections on first launch; fallback to demo if none saved
   useEffect(() => {
-    handleLoadDemo();
+    loadInitialConnections();
   }, []);
+
+  const loadInitialConnections = async () => {
+    try {
+      const saved: ConnectionConfig[] = await invoke('get_saved_connections');
+      if (saved && saved.length > 0) {
+        setConnections(saved);
+        const first = saved[0];
+        setActiveConnectionId(first.id);
+        activateAndConnect(first);
+      } else {
+        handleLoadDemo();
+      }
+    } catch (err) {
+      console.error('Failed to load saved connections, loading demo:', err);
+      handleLoadDemo();
+    }
+  };
+
+  const activateAndConnect = async (config: ConnectionConfig) => {
+    const id = config.id;
+    setConnectingIds((prev) => ({ ...prev, [id]: true }));
+    try {
+      const isActive: boolean = await invoke('is_connection_active', { id });
+      if (!isActive) {
+        await invoke('connect_db', { config });
+      }
+      const meta: DatabaseMetadata = await invoke('get_schema_metadata', { id });
+      setMetadataMap((prev) => ({ ...prev, [id]: meta }));
+      setTabs((prev) =>
+        prev.map((t) => (t.id === activeTabId ? { ...t, connectionId: id } : t))
+      );
+    } catch (err) {
+      console.error(`Error conectando a ${config.name}:`, err);
+    } finally {
+      setConnectingIds((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const handleSelectConnection = (id: string) => {
+    setActiveConnectionId(id);
+    setTabs((prev) =>
+      prev.map((t) => (t.id === activeTabId ? { ...t, connectionId: id } : t))
+    );
+    const conn = connections.find((c) => c.id === id);
+    if (conn) {
+      activateAndConnect(conn);
+    }
+  };
 
   const handleLoadDemo = async () => {
     setIsDemoLoading(true);
@@ -96,7 +146,15 @@ export function App() {
 
   const handleConnect = async (config: ConnectionConfig) => {
     const connId: string = await invoke('connect_db', { config });
-    setConnections((prev) => [...prev, { ...config, id: connId }]);
+    const finalConfig = { ...config, id: connId };
+
+    // Persist to native storage
+    await invoke('save_connection', { config: finalConfig });
+
+    setConnections((prev) => {
+      const filtered = prev.filter((c) => c.id !== connId);
+      return [...filtered, finalConfig];
+    });
     setActiveConnectionId(connId);
 
     // Fetch schema metadata
@@ -109,12 +167,38 @@ export function App() {
     );
   };
 
-  const handleRefreshMetadata = async (id: string) => {
+  const handleDeleteConnection = async (id: string) => {
     try {
-      const meta: DatabaseMetadata = await invoke('get_schema_metadata', { id });
-      setMetadataMap((prev) => ({ ...prev, [id]: meta }));
+      if (id !== 'demo-sqlite') {
+        await invoke('delete_saved_connection', { id });
+      } else {
+        await invoke('disconnect_db', { id });
+      }
+
+      setConnections((prev) => prev.filter((c) => c.id !== id));
+      setMetadataMap((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+
+      if (activeConnectionId === id) {
+        const remaining = connections.filter((c) => c.id !== id);
+        const nextConn = remaining[0] || null;
+        setActiveConnectionId(nextConn?.id || null);
+        if (nextConn) {
+          activateAndConnect(nextConn);
+        }
+      }
     } catch (err) {
-      console.error('Failed to refresh metadata:', err);
+      console.error('Error al eliminar la conexión:', err);
+    }
+  };
+
+  const handleRefreshMetadata = async (id: string) => {
+    const conn = connections.find((c) => c.id === id);
+    if (conn) {
+      await activateAndConnect(conn);
     }
   };
 
@@ -303,18 +387,15 @@ export function App() {
         connections={connections}
         activeConnectionId={activeConnectionId}
         metadataMap={metadataMap}
-        onSelectConnection={(id) => {
-          setActiveConnectionId(id);
-          setTabs((prev) =>
-            prev.map((t) => (t.id === activeTabId ? { ...t, connectionId: id } : t))
-          );
-        }}
+        onSelectConnection={handleSelectConnection}
         onOpenNewConnectionModal={() => setIsNewConnModalOpen(true)}
         onLoadDemo={handleLoadDemo}
         onRefreshMetadata={handleRefreshMetadata}
+        onDeleteConnection={handleDeleteConnection}
         onSelectTableForQuery={handleSelectTableForQuery}
         onSelectFormula={handleSelectFormula}
         isDemoLoading={isDemoLoading}
+        connectingIds={connectingIds}
       />
 
       {/* Main Workspace Area */}
@@ -343,10 +424,7 @@ export function App() {
                 value={activeConnectionId || ''}
                 onChange={(e) => {
                   const id = e.target.value;
-                  setActiveConnectionId(id);
-                  setTabs((prev) =>
-                    prev.map((t) => (t.id === activeTabId ? { ...t, connectionId: id } : t))
-                  );
+                  handleSelectConnection(id);
                 }}
                 className="bg-transparent text-zinc-200 outline-none cursor-pointer font-medium"
               >
@@ -541,6 +619,11 @@ export function App() {
               onExecute={(queryToRun) => handleExecuteQuery(undefined, queryToRun)}
               onActiveQueryChange={setActiveCursorQuery}
               isExecuting={activeTab.isExecuting}
+              metadata={
+                (activeTab.connectionId && metadataMap[activeTab.connectionId]) ||
+                (activeConnectionId && metadataMap[activeConnectionId]) ||
+                null
+              }
             />
           </div>
 

@@ -5,8 +5,10 @@ export interface SqlStatement {
 }
 
 /**
- * Splits an SQL script into discrete statements, respecting string literals,
- * comments (-- and /* *\/) and semicolons.
+ * Splits an SQL script into discrete statements, respecting string literals
+ * (single quotes, double quotes, backticks), escape characters (\'),
+ * single-line comments (--), multi-line block comments (/* *\/),
+ * and PostgreSQL dollar-quoted blocks ($$ ... $$ or $tag$ ... $tag$).
  */
 export function extractStatements(fullSql: string): SqlStatement[] {
   const lines = fullSql.split('\n');
@@ -15,43 +17,122 @@ export function extractStatements(fullSql: string): SqlStatement[] {
   let startLine = 1;
   let inString = false;
   let stringChar = '';
+  let inBlockComment = false;
+  let dollarTag: string | null = null;
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
     const lineNum = lineIdx + 1;
 
-    if (currentSql.trim() === '') {
-      startLine = lineNum;
-    }
-
     let i = 0;
     while (i < line.length) {
       const char = line[i];
 
-      // Single line comments --
-      if (!inString && char === '-' && i + 1 < line.length && line[i + 1] === '-') {
-        currentSql += line.slice(i) + '\n';
-        break;
+      // 1. Inside multi-line block comment /* ... */
+      if (inBlockComment) {
+        if (char === '*' && i + 1 < line.length && line[i + 1] === '/') {
+          currentSql += '*/';
+          inBlockComment = false;
+          i += 2;
+          continue;
+        }
+        currentSql += char;
+        i++;
+        continue;
       }
 
-      // String quotes (', ", `)
-      if (char === "'" || char === '"' || char === '`') {
-        if (!inString) {
-          inString = true;
-          stringChar = char;
-        } else if (stringChar === char) {
-          // Escaped quote e.g. ''
-          if (i + 1 < line.length && line[i + 1] === char) {
-            currentSql += char + char;
+      // 2. Inside PostgreSQL dollar-quoted block e.g. $$ ... $$ or $body$ ... $body$
+      if (dollarTag !== null) {
+        if (line.startsWith(dollarTag, i)) {
+          currentSql += dollarTag;
+          i += dollarTag.length;
+          dollarTag = null;
+          continue;
+        }
+        currentSql += char;
+        i++;
+        continue;
+      }
+
+      // 3. Inside standard string literal ('...', "...", `...`)
+      if (inString) {
+        // Backslash escaping (\' or \\ or \")
+        if (char === '\\' && i + 1 < line.length) {
+          currentSql += char + line[i + 1];
+          i += 2;
+          continue;
+        }
+
+        // Quote closing or SQL standard doubled quote ('' or "" or ``)
+        if (char === stringChar) {
+          if (i + 1 < line.length && line[i + 1] === stringChar) {
+            currentSql += stringChar + stringChar;
             i += 2;
             continue;
           }
           inString = false;
+          stringChar = '';
+          currentSql += char;
+          i++;
+          continue;
+        }
+
+        currentSql += char;
+        i++;
+        continue;
+      }
+
+      // 4. Outside strings and comments: Normal SQL parsing
+
+      // Check start of multi-line block comment /*
+      if (char === '/' && i + 1 < line.length && line[i + 1] === '*') {
+        if (currentSql.trim() === '') {
+          startLine = lineNum;
+        }
+        inBlockComment = true;
+        currentSql += '/*';
+        i += 2;
+        continue;
+      }
+
+      // Check single-line comment --
+      if (char === '-' && i + 1 < line.length && line[i + 1] === '-') {
+        if (currentSql.trim() === '') {
+          startLine = lineNum;
+        }
+        currentSql += line.slice(i);
+        break; // Remainder of line is comment
+      }
+
+      // Check start of string literal
+      if (char === "'" || char === '"' || char === '`') {
+        if (currentSql.trim() === '') {
+          startLine = lineNum;
+        }
+        inString = true;
+        stringChar = char;
+        currentSql += char;
+        i++;
+        continue;
+      }
+
+      // Check start of PostgreSQL dollar quoting ($$ or $tag$)
+      if (char === '$') {
+        const remainder = line.slice(i);
+        const match = remainder.match(/^\$[a-zA-Z0-9_]*\$/);
+        if (match) {
+          if (currentSql.trim() === '') {
+            startLine = lineNum;
+          }
+          dollarTag = match[0];
+          currentSql += dollarTag;
+          i += dollarTag.length;
+          continue;
         }
       }
 
-      // Semicolon statement boundary
-      if (!inString && char === ';') {
+      // Statement boundary: Semicolon ;
+      if (char === ';') {
         currentSql += char;
         const trimmed = currentSql.trim();
         if (trimmed.length > 0) {
@@ -62,9 +143,20 @@ export function extractStatements(fullSql: string): SqlStatement[] {
           });
         }
         currentSql = '';
+        startLine = lineNum + 1;
         i++;
-        startLine = lineNum;
+
+        // Peek ahead on this same line: if non-whitespace exists, startLine is current line
+        const restOfLine = line.slice(i).trim();
+        if (restOfLine.length > 0) {
+          startLine = lineNum;
+        }
         continue;
+      }
+
+      // Non-whitespace character starts statement tracking if empty
+      if (currentSql.trim() === '' && !char.match(/\s/)) {
+        startLine = lineNum;
       }
 
       currentSql += char;
@@ -101,6 +193,18 @@ export function getStatementAtLine(fullSql: string, lineNumber: number): SqlStat
     }
   }
 
-  // Fallback to closest statement
+  // If cursor is before the first statement
+  if (lineNumber < statements[0].startLine) {
+    return statements[0];
+  }
+
+  // If cursor is between statements, find the closest statement
+  for (let idx = 0; idx < statements.length - 1; idx++) {
+    if (lineNumber > statements[idx].endLine && lineNumber < statements[idx + 1].startLine) {
+      return statements[idx];
+    }
+  }
+
+  // Fallback to last statement
   return statements[statements.length - 1] || null;
 }

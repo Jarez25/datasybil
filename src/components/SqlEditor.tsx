@@ -1,6 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { getStatementAtLine } from '../utils/sqlParser';
+import { createSqlCompletionProvider } from '../utils/sqlIntelliSense';
+import { DatabaseMetadata } from '../types';
 import { Play } from 'lucide-react';
 
 interface Props {
@@ -9,6 +11,7 @@ interface Props {
   onExecute: (queryToRun?: string) => void;
   onActiveQueryChange?: (query: string) => void;
   isExecuting: boolean;
+  metadata?: DatabaseMetadata | null;
 }
 
 export const SqlEditor: React.FC<Props> = ({
@@ -17,6 +20,7 @@ export const SqlEditor: React.FC<Props> = ({
   onExecute,
   onActiveQueryChange,
   isExecuting,
+  metadata,
 }) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
@@ -24,6 +28,8 @@ export const SqlEditor: React.FC<Props> = ({
   const monacoRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const decorationsRef = useRef<any>([]);
+  const metadataRef = useRef(metadata);
+  metadataRef.current = metadata;
   const [activeStatementInfo, setActiveStatementInfo] = useState<{
     startLine: number;
     endLine: number;
@@ -117,6 +123,10 @@ export const SqlEditor: React.FC<Props> = ({
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+
+    // Register SQL IntelliSense completion provider (tables, columns, functions, snippets)
+    const provider = createSqlCompletionProvider(monaco, () => metadataRef.current);
+    monaco.languages.registerCompletionItemProvider('sql', provider);
 
     // Command: Ctrl+Enter / Cmd+Enter runs selected or current statement
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
